@@ -1,0 +1,296 @@
+# A股K线形态扫描 —— 全部可调参数
+# 形态识别必然要反复调参，改这里即可，不用改代码。
+# 缺失的键会回落到 src/tradeyh/config.py 里的 DEFAULTS。
+
+data:
+  storage: csv                  # 存储格式: csv / json / sqlite（默认 csv）
+  sources: [baostock, eastmoney, tencent, sina] # baostock 最稳定；HTTP 渠道按顺序回退
+  db_path: data/kline.db        # storage=sqlite 时的库文件
+  data_dir: data/store          # storage=csv/json 时的数据目录（下面再分 csv/ json/ 子目录）
+  out_dir: out
+  history_start: "20220101"   # 全量拉取起始日，约750根日线
+  adjust: qfq                 # qfq 前复权 / hfq 后复权 / "" 不复权
+  period: daily
+  max_workers: 4              # 并发度，限流严重时降到 2-3
+  request_timeout: 15
+  retry: 3
+  drift_check_bars: 30        # 增量时回看多少根做复权漂移检测
+  drift_tolerance: 0.002      # 重叠日收盘价偏差超过 0.2% 判定发生除权
+
+universe:
+  exclude_st: true            # 剔除 ST / *ST
+  exclude_delisted: true      # 剔除名称含"退"
+  exclude_star_market: true  # 剔除科创板 688
+  exclude_bj: true            # 剔除北交所 8xxxxx / 4xxxxx，顺带剔沪B股 9xxxxx
+  min_bars: 250               # 历史K线不足则跳过（滤掉次新股）
+  min_float_mv: 0             # 最小流通市值（元），0=不限
+  min_amount: 0               # 最小当日成交额（元），0=不限
+  max_price: 0                # 股价上限（元），0=不限；如只关注中低价股可设 30 / 50
+
+market:                       # 市场环境 / 情绪 / 行业热度（综合评分的环境修正）
+  enabled: true
+  index_codes:                # 指数K线也存进同一个 store，代码前缀 idx_
+    csi300: idx_000300
+    csi1000: idx_000905
+    chinext: idx_399006
+  index_weights: {csi300: 0.4, csi1000: 0.3, chinext: 0.3}
+  regime_thresholds: {strong: 80, bullish: 65, neutral: 45, weak: 25}
+  sentiment_weights:          # 6 个子指标权重（和=1）
+    advance_ratio: 0.20
+    median_return: 0.20
+    limit_count: 0.15
+    failed_limit_rate: 0.15
+    limit_follow_through: 0.15
+    max_streak: 0.15
+  sector_weights:             # 6 个子指标权重（和=1）
+    relative_return: 0.20
+    volume_ratio: 0.15
+    breadth: 0.15
+    trend: 0.20
+    capital_intensity: 0.15
+    outperform_days: 0.15
+  factor_bands:               # 环境乘子带宽：中性 50 分必须 = 1.00，否则综合评分整体缩水
+    market: {lo: 0.85, hi: 1.15}      # 0分→lo, 50分→1.00, 100分→hi，两段线性
+    sentiment: {lo: 0.95, hi: 1.05}
+    sector: {lo: 0.90, hi: 1.10}
+  sector_bonus: 1.05          # 板块阶段 启动/扩散/主升 的加成
+  sector_penalty: 0.95        # 板块阶段 高潮 的折扣
+  block_long_regime_threshold: 25   # 未启用（保留）
+  downgrade_sector_threshold: 30    # 未启用（保留）
+  history_days: 60            # rebuild-market 默认回填的交易日数
+
+swings:
+  pct_min: 0.05               # ZigZag 最小反转幅度
+  atr_period: 14
+  atr_k: 1.5                  # 实际阈值 = max(pct_min, atr_k * ATR / price)
+  fractal_window: 5           # 分形极值窗口（单边），用于颈线/轨道触碰计数
+
+w_bottom:
+  enabled: true
+  bottom_tol: 0.05            # 双底价差容忍度
+  min_neck_height: 0.08       # 颈线相对底部的最小高度
+  max_neck_height: 0.60
+  min_width: 15               # 形态总宽度（根）
+  max_width: 150
+  time_ratio_min: 0.3         # 左右两段时间比
+  time_ratio_max: 3.0
+  prior_drop: 0.15            # L1 之前须有的跌幅
+  prior_lookback: 60
+  breakout_buffer: 0.01       # 突破颈线需超出的幅度
+  breakout_within: 10         # 已形成：最近N根内完成突破
+  forming_near_neck: 0.05     # 构筑中：价格进入颈线下方5%以内
+  forming_max_age: 30         # 构筑中：右底距今超过N根视为形态失效
+  vol_ratio_breakout: 1.5     # 突破日放量倍数（相对VOL_MA20）
+
+m_top:
+  enabled: true
+  top_tol: 0.05
+  min_neck_depth: 0.08
+  max_neck_depth: 0.60
+  min_width: 15
+  max_width: 150
+  time_ratio_min: 0.3
+  time_ratio_max: 3.0
+  prior_rise: 0.15            # H1 之前须有的涨幅
+  prior_lookback: 60
+  breakdown_buffer: 0.01
+  breakdown_within: 10
+  forming_near_neck: 0.05
+  forming_max_age: 30
+  vol_ratio_breakdown: 1.2
+
+break_bottom:                 # 破底翻
+  enabled: true
+  min_span: 20                # 前低 L0 → 破底新低 的最小间隔根数（约1个月）
+  max_span: 45                # 最大间隔根数（约2个月）。3 个月上限会把箱体里
+                              # "陈旧前低 + 又创个低点"也收进来（实测占伪命中约四成）
+  break_within: 63            # 破底新低须发生在最近N根内（与探底回看的量级相当：
+                              # 探底超过一个季度就不再是短期诱空结构）
+  prior_drop: 0.15            # L0 之前须有的跌幅——确认处于下行趋势（前置结构）
+  prior_lookback: 60          # 前置结构回看根数：衡量跌幅，同时界定"前低必须是最低点"的区间
+  min_break_depth: 0.015      # 破底深度下限：低于此值只是噪声级新低，不算"有效跌破"
+  max_break_depth: 0.10       # 破底深度上限：新低距前低超过此值即真破位不是"翻"，核心过滤
+  min_neck_height: 0.05       # 颈线（前低之后的反弹高点）相对 L0 的最小高度
+  max_neck_height: 0.60       # 颈线最大高度：反弹过高说明与底部结构脱节
+  recover_bars: 5             # 破底新低后N根内必须收盘收复 L0（3~5日内止跌）
+  pullback_invalid_consecutive: 2  # 收复L0后连续N根收盘又落在L0下方 = 这次"翻"失败，
+                              # 结构作废（与 break_bottom_b2 同名同义；B2 那边一直在用）
+  neck_breakout_buffer: 0.005 # 收盘站上颈线需超出的幅度（只用于初始触发，维持用颈线本身）
+  neck_breakout_vol_ratio: 1.3  # 突破颈线日量 ≥ 前5日均量×N（放量≥30%，硬性要求）
+  breakout_within: 10         # 已形成：突破须发生在最近N根内（太旧=形态已走完）
+  forming_max_age: 30         # 构筑中：新低距今超N根仍未突破颈线则丢弃
+  stop_atr_buffer: 0.5        # 止损 = L0 - N×ATR14
+
+break_bottom_b2:              # 破底翻第二买点（优先级 S，需 B1 已触发为前提）
+  enabled: true
+  break_within_b2: 100        # B2允许破底新低发生在更早的位置（回看根数）
+  min_bars_after_breakout: 8  # 颈线放量突破后至少N根，才可能形成第一波+回踩
+  breakout_within: 10         # 已形成：突破前高须发生在最近N根内（太旧=形态已走完）
+  rebound_min_pct: 0.05       # 第一波最小反弹幅度 5%
+  rebound_min_atr_k: 1.5      # 或 N×ATR
+  pullback_min_pct: 0.02      # 最小回撤幅度 2%
+  pullback_min_atr_k: 0.8     # 或 N×ATR
+  pullback_invalid_consecutive: 2  # 连续N日收盘跌破L0则失效
+  pullback_l0_atr_buffer: 0.5    # 收盘跌破 L0-N×ATR 则失效
+  vol_shrink_ratio: 0.85      # 回踩量/第一波量上限
+  breakout_buffer_pct: 0.005  # 突破H1的最小幅度 0.5%
+  breakout_vol_ratio: 1.2     # 突破量/vol_ma20倍数
+  rsi_min: 50                 # 突破时RSI下限
+  ma20_slope_lookback: 5      # MA20斜率回看天数
+  chase_reduce_pct: 0.05      # 突破后涨幅超此值降分
+  chase_abort_pct: 0.08       # 超此值不追
+  stop_atr_buffer: 0.5        # B2 止损 = L1 - N×ATR14
+  failed_breakout_bars: 3     # 突破H1后N个【交易日】收盘跌回H1下方视为失败突破
+  forming_max_age: 40         # 回踩低点L1距今超N根仍未突破则丢弃（防僵尸构筑中滞留）
+
+break_bottom_v2:              # 破底翻v2（ATR 严格口径）—— 已整体停用
+  enabled: false              # 注意：代码已从检测器注册表摘除，只改这里不会生效！
+                              # 重新启用需同时在 src/tradeyh/patterns/__init__.py 登记，
+                              # 并把 break_bottom_v2(_b2) 加回 watch.patterns
+  l0_lookback: 60             # L0 = 最近N根内确认的 Swing Low
+  l0_must_be_leg_low: true    # L0 回看区内不得有更低的原始最低价
+  prior_drop: 0.15
+  prior_lookback: 60
+  break_low_atr_k: 0.3        # Low < L0 - k×ATR → 有效破底（仅盘中破也算）
+  break_close_atr_k: 0.2      # 或 Close < L0 - k×ATR
+  min_break_depth: 0.015      # 破底深度下限
+  max_break_depth: 0.10       # 破底深度上限（定义外新增：真破位不算"翻"）
+  recover_bars: 5             # 自破底最低点起N根内必须收盘收复 L0
+  fail_confirm_bars: 3        # 收复后N根内不得再有效跌破 L0（按收盘价判定，插针不算）
+  fail_confirm_atr_k: 0.3     # 判据：收盘 > L0 - k×ATR
+  b1_close_atr_k: 0.3         # B1①：Close > L0 + k×ATR
+  b1_hold_days: 2             # B1②：连续N日 Close > L0
+  h1_min_pct: 0.05            # H1 相对 L0 的最小高度
+  h1_min_atr_k: 1.5           # 或相对 L0 的 N×ATR 高度
+  stop_atr_k: 0.3             # 结构止损 = L0 - k×ATR
+  extreme_stop_atr_k: 0.5     # 极限破底止损 = L1 - k×ATR
+  tp2_lookback: 120           # TP2 候选池回看根数
+  tp2_dense_bins: 24          # 成交密集区分箱数
+  rr_observe: 1.5             # RR1 分级：观察
+  rr_high: 2.0                # RR1 分级：高质量
+  rr_value: 3.0               # RR1 分级：高性价比
+  breakout_within: 63         # 已形成：B1 确认须发生在最近N根内
+  forming_max_age: 30         # 构筑中：破底最低距今超N根仍未确认则丢弃
+  emit_invalid: true          # 是否输出失效行（status=invalid）
+  invalid_within: 20          # 失效须发生在最近N根内才输出（防历史失败塞满报表）
+  trail_ma_atr_k: 1.0         # 移动止盈①：MA20 - k×ATR
+  trail_swing_atr_k: 0.3      # 移动止盈②：最近SwingLow - k×ATR
+
+break_bottom_v2_b2:           # 破底翻v2第二买点 —— 已整体停用
+  enabled: false              # 同 break_bottom_v2：重新启用要先在检测器注册表里登记
+  break_within_v2: 100        # B1 确认点须发生在最近N根内
+  min_bars_after_b1: 8        # B1 之后至少N根，才可能形成第一波+回踩
+  pullback_min_pct: 0.02      # 最小回踩幅度
+  pullback_min_atr_k: 0.8     # 或 N×ATR
+  pullback_l0_atr_k: 0.3      # 回踩不得有效跌破 L0 - N×ATR
+  pullback_max_vol_ratio: 0.85  # 回踩均量/第一波均量上限
+  breakout_buffer_pct: 0.005  # 收盘突破 H1 的最小幅度
+  breakout_vol_ratio: 1.2     # 突破量/vol_ma5 倍数
+  breakout_within: 10         # 已形成：突破须发生在最近N根内
+  chase_abort_pct: 0.08       # 突破后涨幅超此值不追
+  stop_swing_atr_k: 0.3       # 止损含 pl - k×ATR
+  forming_max_age: 40         # 构筑中：回踩点距今超N根仍未突破则丢弃
+  emit_invalid: true
+  invalid_within: 20          # 失效须发生在最近N根内才输出
+
+channel:
+  enabled: true
+  windows: [60, 90, 120]      # 多窗口拟合，取质量分最高
+  min_r2: 0.35
+  min_containment: 0.90       # 收盘价落在通道内的占比
+  min_width: 0.05             # 通道相对宽度
+  max_width: 0.35
+  touch_tol: 0.015            # 距轨道1.5%以内算一次触碰
+  min_touches: 2              # 上下轨各需的触碰次数——区分真通道与随机游走的关键
+  trend_threshold: 0.08       # 窗口内累计涨跌幅 ±8% 区分 上升/下降/横盘
+  resid_q_upper: 0.95         # 用残差分位数定轨，抗单根插针
+  resid_q_lower: 0.05
+
+breakout:
+  enabled: true
+  consolidation_window: 25
+  prior_lookback: 60
+  platform_trend: 0.12
+  platform_slope: 0.012
+  box_slope: 0.006
+  flag_trend: 0.15
+  flag_slope: 0.02
+  max_range: 0.18
+  target_range: 0.08
+  breakout_buffer: 0.01
+  forming_near: 0.03
+  cup_window: 80
+  cup_min_depth: 0.12
+  cup_max_depth: 0.45
+  cup_rim_tol: 0.08
+  rounding_window: 80         # 圆弧底窗口
+  rounding_min_depth: 0.10    # 圆弧底最小深度
+  rounding_max_depth: 0.40    # 圆弧底最大深度
+  rounding_symmetry: 0.70     # 对称性容忍度（0-1，越大越宽松）
+  pullback_touch_tol: 0.015   # 回踩触下沿容忍度
+
+trend_pullback:
+  enabled: true
+  lookback: 60                # 上升趋势回看窗口
+  min_rise: 0.10              # 前期最小涨幅
+  pullback_min: 0.03          # 最小回撤幅度
+  pullback_max: 0.20          # 最大回撤幅度
+  ma20_tol: 0.015             # MA20 触碰容忍度
+  ma60_tol: 0.02              # MA60 触碰容忍度
+  stop_buffer: 0.03           # 止损在支撑下方 3%
+  high_max_age: 15            # 近期高点距今最多 N 根，超期算掉队老高点直接丢弃
+
+scoring:
+  geom_weight: 50
+  vol_weight: 25
+  trend_weight: 25
+  forming_discount: 0.85      # 构筑中形态的分数折扣
+  min_score: 0                # 报表最低分门槛，CLI --min-score 可覆盖
+
+charts:                       # 个股标注图（K线 + 关键点位 + 趋势线）
+  enabled: false              # 默认不出图（省时间省磁盘）；需要时 cli 加 --plot，或设 true 永久打开
+  dir: ""                     # 图片根目录，空 = data.out_dir/charts。实际写入 <根>/<YYYYMMDD>/<形态key>/
+  bars: 180                   # 每张图显示的K线根数
+  max_charts: 0               # 单次扫描最多出图数（按榜单顺序），0=不限（默认全出）
+  dpi: 130
+  include_ma20: true          # 叠加 MA20
+  index_html: true            # 生成 index.html 索引页（写在当天的目录里）
+
+watch:                        # 观察池 + 盘中站稳提醒
+  enabled: true
+  pool_path: data/watch/pool.json
+  patterns: [break_bottom, breakdown_reversal, break_bottom_b2, platform_breakout, breakout_retest, trend_pullback]    # watch sync 默认同步哪些形态（v2 已暂停）
+  statuses: [forming]         # 只收"构筑中"——已形成的等不到盘中转折点了
+  min_score: 0                # 入池最低综合评分
+  max_pool: 50                # 池子上限，候选超出时按综合评分截断
+  interval: 60                # 轮询间隔（秒），全程固定
+  pool_refresh_interval: 900 # 观察池刷新间隔（秒），结合最新价重扫全市场；0=关闭
+  confirm_rounds: 2           # 连续N轮判定"已形成"才提醒，滤掉分时插针
+  quote_sources: [eastmoney, tencent, ths]   # 报价渠道优先级（同花顺一股一请求、且约 10~20% 网关 502，放最后兵底）
+  bell: false                 # 触发提醒时终端响铃
+
+trade:                        # 模拟交易
+  enabled: true
+  account_path: data/trade/account.json
+  positions_path: data/trade/positions.json
+  history_path: data/trade/history.json
+  initial_capital: 100000     # 初始资金10万
+  risk_per_trade: 0.01        # 每笔风险1%
+  max_positions: 10           # 最大同时持仓数
+  breakeven_pct: 0.03         # 涨3%后止损移到成本（保本）
+  trail_trigger_pct: 0.05     # 涨5%后启动追踪止损
+  trail_pct: 0.02             # 追踪止损回撤2%
+  min_target_upside: 0.08     # 距目标价不足8%则不买入（上涨空间太小）
+  max_entry_drift: 0.10       # 现价距形成点位（止损）偏离超10%则不买入
+  failed_breakout_bars: 3     # B2 突破后N个【交易日】内跌回H1下方即离场（交易层退出，
+                              # 与检测器 break_bottom_b2.failed_breakout_bars 各自独立）
+  partial_close_pct: 0.5      # 到达T1时卖出比例（50%分批止盈）
+  min_rr1: 1.5                # RR1 不足则不买入（仅对带 tp1_price 的 v2 口径生效）
+  trail_use_ma_hl: true       # 分批止盈后用MA20/最近有效HL作为移动止盈
+  emt:                        # 东财 EMT 极速柜台仿真
+    enabled: false            # 设为 true 启用真实仿真下单
+    ip: "61.152.230.41"      # EMT 交易地址
+    port: 19088               # EMT 端口
+    account_id: ""            # 资金账号：填 .env 的 TRADEYH_EMT_ACCOUNT_ID（勿提交真实值）
+    password: ""              # 资金密码：填 .env 的 TRADEYH_EMT_PASSWORD（勿提交真实值）
+    local_ip: "127.0.0.1"    # 本机IP（柜台白名单校验用）

@@ -1,0 +1,16 @@
+pandas>=2.0
+numpy>=1.24
+scipy>=1.10
+pyyaml>=6.0
+openpyxl>=3.1
+tqdm>=4.65
+baostock>=0.8.8
+
+# 可选：单股形态标注图 (cli.py scan --code X --plot)
+mplfinance>=0.12
+
+# 可选：东财 EMT 极速柜台仿真交易 (trade.emt.enabled: true)
+# vnemttrader SDK 位于 emt_api_python/lib/linux/，无需 pip 安装
+
+# 开发
+pytest>=7.0

@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+out/
+.venv/
+venv/
+.qoder/
+data/
+
+# 本地敏感配置（凭证只放这里，模板见 .env.example）
+.env
+.env.*
+!.env.example
